@@ -1,0 +1,13 @@
+# User-supplied AI Hub assets must never be committed.
+model/
+samples/
+*.bin
+*.f32
+*.h5
+*.7z
+*.zip
+network.json
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
