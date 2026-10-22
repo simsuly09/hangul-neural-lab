@@ -1,5 +1,4 @@
-# User-supplied AI Hub assets must never be committed.
-model/
+# Exclude original datasets and training archives.
 samples/
 *.bin
 *.f32
@@ -11,3 +10,7 @@ node_modules/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Bundle the converted inference model.
+!model/weights.bin
+!model/network.json

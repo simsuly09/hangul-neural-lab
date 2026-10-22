@@ -1,6 +1,12 @@
 // This graph is reconstructed from the user's Keras file; no training takes place here.
 export async function loadNetwork(tf, base = './', progress = () => {}, local = null) {
-  if(!local) throw new Error('먼저 내 컴퓨터의 모델 파일을 선택해 주세요.');
+  if(!local) {
+    const config=await fetch(new URL('model/network.json', new URL(base, globalThis.location?.href)));
+    if(!config.ok) throw new Error('기본 모델 정보를 불러오지 못했습니다. 새로고침하거나 모델 파일을 직접 선택해 주세요.');
+    const weights=await fetch(new URL('model/weights.bin', new URL(base, globalThis.location?.href)));
+    if(!weights.ok) throw new Error('기본 모델 가중치를 불러오지 못했습니다. 새로고침하거나 모델 파일을 직접 선택해 주세요.');
+    local={meta:await config.json(),buffer:await weights.arrayBuffer()};
+  }
   const {meta,buffer}=local;
   validateModel(meta, buffer);
   const values = new Map(), objects = new Map();

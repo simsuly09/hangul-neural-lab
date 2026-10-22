@@ -63,7 +63,7 @@ const basicStrokes={
 function drawBasic(target,label){const c=target.getContext('2d');c.fillStyle='#fff';c.fillRect(0,0,target.width,target.height);c.strokeStyle='#111';c.lineWidth=15*target.width/320;c.lineCap='round';c.lineJoin='round';for(const stroke of basicStrokes[label]){c.beginPath();stroke.forEach(([x,y],i)=>{const p=[x*target.width/320,y*target.height/320];i?c.lineTo(...p):c.moveTo(...p);});c.stroke();}}
 async function useBasic(label){checkpoint();clearCanvas();drawBasic(canvas,label);invalidate();if(network)await infer();else $('#message').textContent='예시를 그렸습니다. 모델 파일을 불러오면 인식할 수 있습니다.';}
 $('#upload').onchange=async e=>{const file=e.target.files[0];if(!file)return;const url=URL.createObjectURL(file);try{const image=new Image();image.src=url;await image.decode();checkpoint();clearCanvas();const s=300/Math.max(image.width,image.height);ctx.drawImage(image,(320-image.width*s)/2,(320-image.height*s)/2,image.width*s,image.height*s);invalidate();$('#message').textContent='이미지를 불러왔습니다. 손글씨 인식하기를 눌러 주세요.';}catch{$('#message').textContent='이미지를 읽을 수 없습니다.';}finally{URL.revokeObjectURL(url);}};
-async function activateModel(local){
+async function activateModel(local=null){
   const previous=network;
   $('#predict').disabled=true;$('#modelFiles').disabled=true;
   try{
@@ -86,7 +86,7 @@ $('#forgetModel').onclick=async()=>{try{await forgetModel();$('#message').textCo
 async function boot(){try{
     try{scene=new NetworkScene($('#scene'),selectLayer);}catch(e){$('#sceneGuide').innerHTML='<p>이 브라우저에서 3D 그래픽을 사용할 수 없습니다.<br>하드웨어 가속을 지원하는 브라우저에서 열어 주세요.</p>';console.error(e);}
     for(const label of Object.keys(basicStrokes)){const button=document.createElement('button');button.className='sample';button.setAttribute('aria-label',`기본 예시 ${label}`);const drawing=document.createElement('canvas');drawing.width=64;drawing.height=64;drawBasic(drawing,label);const span=document.createElement('span');span.textContent=label;button.append(drawing,span);button.onclick=()=>useBasic(label);$('#samples').appendChild(button);}
-    $('#status').textContent='모델 선택 대기';let cached=null;try{cached=await readModel();}catch{}
-    if(cached)await activateModel(cached);else window.appReady=true;
+    $('#status').textContent='기본 모델 다운로드 중';let cached=null;try{cached=await readModel();}catch{}
+    if(cached){try{await activateModel(cached);}catch{await forgetModel().catch(()=>{});await activateModel();}}else await activateModel();
   }catch(e){$('#status').textContent='모델 준비 실패';$('#message').textContent=e.message;console.error(e);}}
 boot();
