@@ -9,17 +9,13 @@ const info={
  Dense:['분류','특징의 가중합과 Softmax로 후보별 출력을 계산합니다.',2400]
 };
 export function buildTour(meta){
- const stages=[];
- for(let branch=0;branch<3;branch++){
-  const chain=branchLayers(meta,branch);
-  chain.forEach((layer,layerIndex)=>{
-   if(branch>0&&layer.type==='InputLayer')return;
-   const [title,description,duration]=info[layer.type];
-   stages.push({branch,layer:layer.name,layerIndex,title,description,duration,
-    branchName:branchNames[branch],layerCount:chain.length});
-  });
- }
- return stages;
+ const chains=[0,1,2].map(branch=>branchLayers(meta,branch));
+ if(chains.some(c=>c.length!==chains[0].length||c.some((l,i)=>l.type!==chains[0][i].type)))throw Error('세 분기의 층 구조가 일치하지 않습니다.');
+ return chains[0].map((layer,layerIndex)=>{
+  const [title,description,duration]=info[layer.type];
+  return {layerIndex,layers:chains.map(c=>c[layerIndex].name),layer:layer.name,title,description,duration,
+   branchName:'초성 · 중성 · 종성',layerCount:chains[0].length};
+ });
 }
 export class InferenceTour{
  constructor(stages,onFrame){

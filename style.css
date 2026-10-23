@@ -18,3 +18,19 @@
 .result-panel .model-summary{margin-top:26px}
 @media(max-width:1150px) and (min-width:721px){.result-panel{display:grid;grid-template-columns:minmax(200px,1fr) 260px;gap:8px 25px}.result-panel>.eyebrow,.result-panel>h2,.result-pending,#resultContent{grid-column:1}.result-panel .model-summary{grid-column:2;grid-row:1/5;margin-top:0}}
 @media(max-width:720px){.tour-caption{padding:15px 18px;gap:10px;min-height:124px}.tour-caption h3{font-size:17px}.tour-caption p{font-size:10px}.tour-counter{font-size:10px;padding:4px 6px}.transport{flex-wrap:wrap}.transport>input{order:2;flex-basis:calc(100% - 76px)}.transport>span{order:3}#scene{height:410px}.result-panel{display:block}}
+
+.workspace{container-type:inline-size}
+.branch-detail-label{padding:0 24px;margin:8px 0;color:#8196b1;font-size:10px}
+#scene.parallel-board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));height:auto;gap:1px;background:#29374b}
+.branch-stage{background:#0d121a;min-width:0;overflow:hidden}
+.branch-stage-head{display:flex;align-items:center;justify-content:space-between;padding:13px 14px 0;font-size:12px}
+.branch-stage-head strong{color:#9bdad1;font-weight:600}
+.branch-stage:nth-child(2) .branch-stage-head strong{color:#9fc7ff}
+.branch-stage:nth-child(3) .branch-stage-head strong{color:#d2baff}
+.branch-stage-head span{font-size:9px;color:#7f92ac}
+.branch-viewport{height:340px;position:relative;min-width:0}
+.branch-viewport>canvas{display:block;width:100%;height:100%;touch-action:none}
+.branch-stage-label{padding:7px 12px;margin:0;font-size:9px;color:#9baec8;text-align:center;border-top:1px solid #1d2a3a;white-space:nowrap}
+#scene.parallel-board>.scene-legend,#scene.parallel-board>.scene-help{display:none}
+#scene.parallel-board>.scene-guide{top:42%;background:#0d121ae6;padding:18px}
+@container(max-width:640px){#scene.parallel-board{grid-template-columns:1fr}.branch-stage{position:relative;padding-left:76px}.branch-stage-head{position:absolute;left:0;top:15px;display:block;padding:0 10px}.branch-stage-head strong,.branch-stage-head span{display:block}.branch-stage-head span{margin-top:6px}.branch-viewport{height:clamp(145px,20vh,190px)}.branch-stage-label{font-size:9px;padding:4px 8px}.branch-detail-label{padding:0 18px}}

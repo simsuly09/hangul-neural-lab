@@ -1,5 +1,5 @@
 import {loadNetwork,branchLayers,decode,convAt} from './runtime.mjs';
-import {NetworkScene} from './scene.mjs';
+import {ParallelNetworkScene as NetworkScene} from './parallel-scene.mjs';
 import {buildTour,InferenceTour} from './tour.mjs';
 import {readModel,saveModel,forgetModel} from './model-cache.mjs';
 
@@ -31,14 +31,17 @@ function previewPixels(pixels){const c=$('#preview').getContext('2d');const im=c
 function overview(){const pools=chain.filter(l=>l.type==='MaxPooling2D');return [chain[0],chain.find(l=>l.type==='Conv2D'),...pools,...chain.filter(l=>['Flatten','Dense'].includes(l.type))];}
 function refreshScene(){
  if(!outputs)return;
- const guided=tour&&!tour.complete;
- scene?.build(overview(),outputs,chain,+$('#density').value,guided||focus,selected,{preserveCamera:guided});
- if(guided){scene?.focusLayer(selected,900/Math.max(1,+$('#speed').value));scene?.setProgress((tour.stages[tour.index].layerIndex-1+Math.min(1,Math.max(0,(tour.time-tour.stages.slice(0,tour.index).reduce((n,s)=>n+s.duration,0))/tour.stages[tour.index].duration)))/(chain.length-1));}
- else scene?.setProgress(1);
- $('#sampling').textContent=`추론에는 전체 55개 층과 모든 채널을 사용합니다. 확대 화면: 현재 층과 이전 층 · 최대 4개 채널 · 공간 최대 ${$('#density').value} × ${$('#density').value} 위치 · Flatten 최대 192개 값.`;
+ const guided=tour&&!tour.complete,index=guided?tour.index:Math.max(0,chain.findIndex(l=>l.name===selected));
+ scene?.prepare(network,outputs,+$('#density').value);
+ scene?.setStage(index,{duration:900/Math.max(1,+$('#speed').value),focus:guided||focus});
+ const start=guided?tour.stages.slice(0,tour.index).reduce((n,s)=>n+s.duration,0):0;
+ const local=guided?Math.min(1,Math.max(0,(tour.time-start)/tour.stages[tour.index].duration)):1;
+ scene?.setProgress(index,local,!guided);
+ $('#sampling').textContent=`세 분기를 동시에 재생합니다. 각 분기 19개 층 · 전체 55개 고유 층 계산 · 화면은 최대 4개 채널과 ${$('#density').value} × ${$('#density').value} 위치를 표시합니다. 연결선과 이동 표시는 일부 연산의 설명용 표시입니다.`;
 }
-function selectLayer(name){
- if(tour&&!tour.complete){const at=tour.stages.findIndex(s=>s.branch===branch&&s.layer===name);if(at>=0){tour.seek(tour.stages.slice(0,at).reduce((n,s)=>n+s.duration,0)/tour.total);return;}}
+function selectLayer(name,branchIndex=null){
+ if(branchIndex!==null){branch=branchIndex;document.querySelectorAll('[data-branch]').forEach(b=>{const active=+b.dataset.branch===branch;b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active));});if(network){selected=name;renderLayers();if(outputs)renderOperation();}}
+ if(tour&&!tour.complete){const at=tour.stages.findIndex(s=>s.layers[branch]===name);if(at>=0){tour.seek(tour.stages.slice(0,at).reduce((n,s)=>n+s.duration,0)/tour.total);return;}}
  selected=name;document.querySelectorAll('.layer').forEach(el=>el.classList.toggle('active',el.dataset.name===name));scene?.select(name);if(focus)refreshScene();inspectPosition=0;renderOperation();
 }
 function concealResult(message='신경망 영상이 끝나면 인식한 글자와 확률을 보여줍니다.'){
@@ -57,25 +60,24 @@ function showTourFrame(frame){
  const {stage,index,changed,complete,local,progress}=frame;
  const revealChanged=resultRevealed!==complete,playbackChanged=playing!==frame.playing;
  playing=frame.playing;playPosition=progress;resultRevealed=complete;
- if(branch!==stage.branch||changed){
-  branch=stage.branch;document.querySelectorAll('[data-branch]').forEach(b=>{const active=+b.dataset.branch===branch;b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active));});
-  selected=stage.layer;renderLayers();refreshScene();inspectPosition=0;
+ if(changed){
+  selected=stage.layers[branch];renderLayers();refreshScene();inspectPosition=0;
   const active=document.querySelector('.layer.active');if(active?.parentElement){const strip=active.parentElement;strip.scrollTo({left:active.offsetLeft-strip.offsetLeft-(strip.clientWidth-active.clientWidth)/2,behavior:'smooth'});}
  }
  if(changed||revealChanged)renderOperation();
- scene?.setProgress(complete?1:(stage.layerIndex-1+local)/(chain.length-1));
+ scene?.setProgress(stage.layerIndex,local,complete);
  if(scene)scene.controls.enabled=!playing;
  $('#timeline').value=Math.round(progress*1000);
  if(!changed&&!revealChanged&&!playbackChanged)return;
- $('#tourCaption').hidden=false;$('#tourStage').textContent=complete?'신경망 과정 재생 완료':`${stage.branchName} · ${stage.title}`;
+ $('#tourCaption').hidden=false;$('#tourStage').textContent=complete?'신경망 과정 재생 완료':`세 분기 동시 진행 · ${stage.title}`;
  $('#tourDescription').textContent=complete?'모든 단계를 확인했습니다. 인식 결과를 확인하세요.':stage.description;
  $('#tourCounter').textContent=`${index+1} / ${frame.count}`;$('#timeline').value=Math.round(progress*1000);$('#timeLabel').textContent=`${index+1} / ${frame.count} 단계`;
  $('#play').textContent=complete?'다시 재생':playing?'일시정지':'재생';
  $('#previousStep').disabled=index===0&&!complete;$('#nextStep').disabled=complete;
  $('#focus').disabled=!complete;
  if(complete){if(revealChanged&&window.matchMedia?.('(max-width:1150px)').matches)document.querySelector('.result-panel').scrollIntoView({behavior:'smooth',block:'start'});$('#resultContent').hidden=false;$('#resultPending').hidden=true;renderResult();$('#message').textContent='영상 재생이 끝났습니다. 인식 결과를 확인하세요.';}
- else {concealResult(playing?'각 층을 확대하며 신경망 과정을 재생하고 있습니다.':'일시정지 중입니다. 재생을 끝까지 보면 결과가 나타납니다.');$('#message').textContent='실제로 계산한 활성값을 단계별 영상으로 재생합니다.';}
- window.playbackState={stage:index,total:frame.count,branch,layer:stage.layer,complete,playing,resultVisible:complete};
+ else {concealResult(playing?'초성·중성·종성의 같은 층을 동시에 재생하고 있습니다.':'일시정지 중입니다. 재생을 끝까지 보면 결과가 나타납니다.');$('#message').textContent='실제로 계산한 활성값을 단계별 영상으로 재생합니다.';}
+ window.playbackState={stage:index,total:frame.count,branches:[0,1,2],layers:stage.layers,branch,layer:selected,complete,playing,resultVisible:complete};
 }
 function renderLayers(){chain=branchLayers(network.meta,branch);if(!chain.some(l=>l.name===selected))selected=chain.find(l=>l.type==='Conv2D').name;const holder=$('#layers');holder.replaceChildren();chain.forEach((l,i)=>{const button=document.createElement('button');button.className='layer'+(selected===l.name?' active':'');button.dataset.name=l.name;const shape=outputs?.get(l.name)?.shape;button.textContent=String(i).padStart(2,'0')+' '+labelFor(l);const span=document.createElement('span');span.textContent=shape?shape.join('×'):l.name;button.appendChild(span);button.onclick=()=>selectLayer(l.name);holder.appendChild(button);});}
 function renderResult(){if(!resultRevealed||!prediction)return;const {meta}=network;$('#result').textContent=prediction.char;$('#resultMeta').textContent=sampleLabel?`검증 손글씨 정답: ${sampleLabel} · ${prediction.char===sampleLabel?'일치':'불일치'}`:'손글씨 입력의 추론 결과';$('#parts').innerHTML=prediction.ranked.map((r,i)=>`<div><small>${branchNames[i]}</small><strong>${meta.labels[i][r[0].i]}</strong></div>`).join('');$('#probabilities').innerHTML=prediction.ranked[branch].slice(0,5).map(v=>`<div class="prob-row"><span>${meta.labels[branch][v.i]}</span><div class="bar"><i style="width:${v.p*100}%"></i></div><span>${(v.p*100).toFixed(1)}%</span></div>`).join('');$('#candidates').innerHTML=prediction.candidates.map(c=>`<span class="candidate" title="세 확률의 곱: ${c.score.toPrecision(5)}">${c.char}</span>`).join('');}
@@ -99,11 +101,13 @@ async function infer(){
 }
 $('#predict').onclick=infer;
 document.querySelectorAll('[data-branch]').forEach(button=>button.onclick=()=>{
- const nextBranch=+button.dataset.branch;
- if(tour&&!tour.complete){const at=tour.stages.findIndex(s=>s.branch===nextBranch);tour.seek(tour.stages.slice(0,at).reduce((n,s)=>n+s.duration,0)/tour.total);return;}
- branch=nextBranch;document.querySelectorAll('[data-branch]').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-selected',b===button?'true':'false');});
- if(network){selected=null;renderLayers();if(outputs){if(resultRevealed)renderResult();refreshScene();renderOperation();}}
+ branch=+button.dataset.branch;
+ document.querySelectorAll('[data-branch]').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-selected',b===button?'true':'false');});
+ if(!network)return;
+ selected=tour?tour.stages[tour.index].layers[branch]:null;renderLayers();
+ if(outputs){if(resultRevealed)renderResult();renderOperation();}
 });
+
 $('#resetCamera').onclick=()=>{if(tour&&!tour.complete)scene?.focusLayer(selected);else scene?.reset();};
 $('#density').onchange=refreshScene;
 $('#focus').onclick=()=>{focus=!focus;$('#focus').textContent=focus?'전체 흐름 보기':'선택 층 확대';refreshScene();};
@@ -115,7 +119,7 @@ function renderOperation(){if(!outputs)return;const layer=network.meta.layers.fi
   if(layer.type==='Conv2D'){
     $('#operationDesc').textContent='입력 한 영역과 학습된 필터를 곱합니다. 모든 입력 채널의 곱을 합하고 편향과 ReLU를 적용합니다.';
     const input=outputs.get(layer.inputs[0]);inspectPosition=Math.floor(tensor.shape[0]/2)*tensor.shape[1]+Math.floor(tensor.shape[1]/4);op.innerHTML=`<div class="calc-controls"><label>출력 채널 <input id="outChannel" aria-label="출력 채널" type="number" min="0" max="${tensor.shape[2]-1}" value="0"></label><label>입력 채널 <input id="inChannel" aria-label="입력 채널" type="number" min="0" max="${input.shape[2]-1}" value="0"></label><button id="scan" class="quiet">${inspectionPaused?'필터 이동 재생':'필터 이동 멈춤'}</button><span id="scanPos"></span></div><div class="calc-row"><div><div class="matrix-label">입력 영역</div><div id="inputMatrix"></div></div><span class="operator">×</span><div><div class="matrix-label">학습된 필터</div><div id="filterMatrix"></div></div><div class="calc-result" id="calcResult"></div></div>`;
-    $('#scan').onclick=()=>{inspectionPaused=!inspectionPaused;$('#scan').textContent=inspectionPaused?'필터 이동 재생':'필터 이동 멈춤';};$('#outChannel').oninput=updateConv;$('#inChannel').oninput=updateConv;updateConv();
+    $('#scan').onclick=()=>{inspectionPaused=!inspectionPaused;if(scene)scene.inspectionPaused=inspectionPaused;$('#scan').textContent=inspectionPaused?'필터 이동 재생':'필터 이동 멈춤';};$('#outChannel').oninput=updateConv;$('#inChannel').oninput=updateConv;updateConv();
   }else if(layer.type==='MaxPooling2D'){
     const source=outputs.get(layer.inputs[0]),[h,w,c]=source.shape;const patch=[source.data[0],source.data[c],source.data[w*c],source.data[(w+1)*c]];
     $('#operationDesc').textContent='각 채널의 2 × 2 영역에서 가장 큰 값을 남깁니다. 공간 크기가 절반으로 줄어듭니다.';op.innerHTML=`<div class="calc-row">${matrixHTML(patch,2)}<span class="operator">→</span><div class="calc-result">채널 0, 위치 (0, 0)<br>최댓값 <strong>${Math.max(...patch).toFixed(6)}</strong><br>실제 출력 <strong>${tensor.data[0].toFixed(6)}</strong></div></div>`;
@@ -131,7 +135,7 @@ let scanClock=0;
 function animate(now){
  requestAnimationFrame(animate);const dt=Math.min(100,Math.max(0,now-lastTime));lastTime=now;
  if(tour&&outputs)tour.tick(dt,+$('#speed').value);
- if(outputs&&!inspectionPaused&&now-scanClock>250&&(!tour||tour.playing||tour.complete)){inspectPosition++;scanClock=now;updateConv();}
+ if(outputs&&!inspectionPaused&&now-scanClock>250&&(!tour||tour.playing||tour.complete)){if(tour&&!tour.complete){const layer=outputs.get(selected),start=tour.stages.slice(0,tour.index).reduce((n,s)=>n+s.duration,0),local=(tour.time-start)/tour.stages[tour.index].duration;inspectPosition=layer.shape.length===3?Math.min(layer.shape[0]*layer.shape[1]-1,Math.floor(local*layer.shape[0]*layer.shape[1])):0;}else inspectPosition++;scanClock=now;updateConv();}
 }
 requestAnimationFrame(animate);
 const basicStrokes={
