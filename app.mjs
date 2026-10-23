@@ -8,16 +8,33 @@ const branchNames=['초성','중성','종성'];let network,outputs=null,predicti
 let scene,focus=false,playing=false,playPosition=0,lastTime=0,inspectPosition=0,inspectionPaused=false;
 let tour=null,resultRevealed=false,inferenceEpoch=0,inferenceBusy=false;
 const labelFor=l=>l.type==='InputLayer'?'입력':l.type==='Conv2D'?'합성곱':l.type==='MaxPooling2D'?'풀링':l.type==='Flatten'?'Flatten':'Softmax';
+function setPhase(phase){
+ document.body.dataset.phase=phase;
+ const current=['computing','playing','paused'].includes(phase)?2:phase==='complete'?3:1;
+ document.querySelectorAll('[data-journey]').forEach(el=>{const n=+el.dataset.journey;el.classList.toggle('done',n<current);if(n===current)el.setAttribute('aria-current','step');else el.removeAttribute('aria-current');});
+ if($('#retryModel'))$('#retryModel').hidden=phase!=='error'||!!network;
+ const badge=document.querySelector('.result-badge');if(badge)badge.textContent=phase==='complete'?'추론 완료':'영상이 끝난 뒤 공개';
+}
+function clockLabel(ms){const sec=Math.floor(ms/1000);return Math.floor(sec/60)+':'+String(sec%60).padStart(2,'0');}
+function updateStageRail(index=-1){
+ const starts=[0,1,5,9,13,17,18],active=starts.filter(n=>n<=index).at(-1);
+ document.querySelectorAll('[data-stage]').forEach(el=>{const n=+el.dataset.stage;el.disabled=!tour;el.classList.toggle('active',n===active);el.classList.toggle('done',n<active);if(n===active)el.setAttribute('aria-current','step');else el.removeAttribute('aria-current');});
+}
+function syncBranchTabs(){document.querySelectorAll('[data-branch], [data-result-branch]').forEach(el=>{const active=+(el.dataset.branch??el.dataset.resultBranch)===branch;el.classList.toggle('active',active);el.setAttribute('aria-selected',String(active));});}
 function clearCanvas(){resetPlayback();ctx.fillStyle='#fff';ctx.fillRect(0,0,320,320);dirty=false;sampleTensor=null;sampleLabel=null;$('#drawHint').hidden=false;}
 clearCanvas();
 function checkpoint(){history.push(ctx.getImageData(0,0,320,320));if(history.length>25)history.shift();}
-function invalidate(){resetPlayback();dirty=true;sampleTensor=null;sampleLabel=null;$('#drawHint').hidden=true;if(outputs){$('#message').textContent='입력이 바뀌었습니다. 다시 인식하면 결과와 활성값을 갱신합니다.';}}
+function invalidate(){resetPlayback();dirty=true;sampleTensor=null;sampleLabel=null;$('#drawHint').hidden=true;$('#message').textContent='준비되면 ‘신경망으로 살펴보기’를 눌러 주세요.';}
 function point(e){const r=canvas.getBoundingClientRect();return [(e.clientX-r.left)*320/r.width,(e.clientY-r.top)*320/r.height];}
 canvas.addEventListener('pointerdown',e=>{checkpoint();drawing=true;canvas.setPointerCapture(e.pointerId);const [x,y]=point(e);ctx.strokeStyle='#000';ctx.fillStyle='#000';ctx.lineWidth=+$('#pen').value;ctx.lineCap='round';ctx.lineJoin='round';ctx.beginPath();ctx.arc(x,y,ctx.lineWidth/2,0,2*Math.PI);ctx.fill();ctx.beginPath();ctx.moveTo(x,y);invalidate();});
 canvas.addEventListener('pointermove',e=>{if(!drawing)return;ctx.lineTo(...point(e));ctx.stroke();});
 canvas.addEventListener('pointerup',()=>{drawing=false;});canvas.addEventListener('pointercancel',()=>drawing=false);
-$('#clear').onclick=()=>{checkpoint();clearCanvas();$('#message').textContent='한글 한 글자를 쓰고 인식하기를 눌러 주세요.';};
+$('#clear').onclick=()=>{checkpoint();clearCanvas();$('#message').textContent='한글 한 글자를 쓰고 ‘신경망으로 살펴보기’를 눌러 주세요.';};
 $('#undo').onclick=()=>{const image=history.pop();if(image){ctx.putImageData(image,0,0);invalidate();}};
+$('#pen').oninput=()=>$('#penValue').textContent=$('#pen').value;
+$('#newDrawing').onclick=()=>{checkpoint();clearCanvas();$('#message').textContent='새로운 한 글자를 써 주세요.';canvas.scrollIntoView({behavior:'smooth',block:'center'});canvas.focus({preventScroll:true});};
+document.querySelectorAll('[data-stage]').forEach(button=>button.onclick=()=>{if(tour)tour.seek(tour.stages.slice(0,+button.dataset.stage).reduce((n,s)=>n+s.duration,0)/tour.total);});
+document.querySelectorAll('[data-result-branch]').forEach(button=>button.onclick=()=>{branch=+button.dataset.resultBranch;syncBranchTabs();if(network){selected=tour?tour.stages[tour.index].layers[branch]:null;renderLayers();if(outputs){renderResult();renderOperation();}}});
 $('#aboutButton').onclick=()=>$('#about').showModal();$('#closeAbout').onclick=()=>$('#about').close();
 
 function normalizedInput(){
@@ -40,7 +57,7 @@ function refreshScene(){
  $('#sampling').textContent=`세 분기를 동시에 재생합니다. 각 분기 19개 층 · 전체 55개 고유 층 계산 · 화면은 최대 4개 채널과 ${$('#density').value} × ${$('#density').value} 위치를 표시합니다. 연결선과 이동 표시는 일부 연산의 설명용 표시입니다.`;
 }
 function selectLayer(name,branchIndex=null){
- if(branchIndex!==null){branch=branchIndex;document.querySelectorAll('[data-branch]').forEach(b=>{const active=+b.dataset.branch===branch;b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active));});if(network){selected=name;renderLayers();if(outputs)renderOperation();}}
+ if(branchIndex!==null){branch=branchIndex;syncBranchTabs();if(network){selected=name;renderLayers();if(outputs)renderOperation();}}
  if(tour&&!tour.complete){const at=tour.stages.findIndex(s=>s.layers[branch]===name);if(at>=0){tour.seek(tour.stages.slice(0,at).reduce((n,s)=>n+s.duration,0)/tour.total);return;}}
  selected=name;document.querySelectorAll('.layer').forEach(el=>el.classList.toggle('active',el.dataset.name===name));scene?.select(name);if(focus)refreshScene();inspectPosition=0;renderOperation();
 }
@@ -52,7 +69,7 @@ function resetPlayback(){
  inferenceEpoch++;tour=null;playing=false;outputs=null;prediction=null;resultRevealed=false;selected=null;
  if(!$('#resultContent'))return;
  concealResult();for(const id of ['play','timeline','focus','previousStep','nextStep'])$('#'+id).disabled=true;
- $('#tourCaption').hidden=true;$('#timeline').value=0;$('#timeLabel').textContent='추론 대기';
+ $('#tourCaption').hidden=false;$('#tourStage').textContent='글자를 쓰면 탐험이 시작돼요';$('#tourDescription').textContent='각 과정을 자동으로 확대해서 보여드릴게요.';$('#tourCounter').textContent='대기 중';$('#timeline').value=0;$('#timeLabel').textContent='0:00 / 0:00';$('#play').textContent='재생';$('#timeline').setAttribute('aria-valuetext','추론 대기');updateStageRail();setPhase(network?'ready':'loading');
  if(scene){scene.controls.enabled=true;scene.disposeRoot();scene.outputs=null;scene.cameraMotion=null;scene.hit=null;scene.hover.hidden=true;}
  $('#sceneGuide').hidden=false;$('#operation').className='operation-placeholder';$('#operation').textContent='입력 대기 중';$('#layers').replaceChildren();$('#latency').textContent='—';
 }
@@ -68,14 +85,16 @@ function showTourFrame(frame){
  scene?.setProgress(stage.layerIndex,local,complete);
  if(scene)scene.controls.enabled=!playing;
  $('#timeline').value=Math.round(progress*1000);
+ $('#timeLabel').textContent=clockLabel(tour.time)+' / '+clockLabel(tour.total);
+ $('#timeline').setAttribute('aria-valuetext',clockLabel(tour.time)+', '+(index+1)+' / '+frame.count+' 단계');
  if(!changed&&!revealChanged&&!playbackChanged)return;
  $('#tourCaption').hidden=false;$('#tourStage').textContent=complete?'신경망 과정 재생 완료':`세 분기 동시 진행 · ${stage.title}`;
  $('#tourDescription').textContent=complete?'모든 단계를 확인했습니다. 인식 결과를 확인하세요.':stage.description;
- $('#tourCounter').textContent=`${index+1} / ${frame.count}`;$('#timeline').value=Math.round(progress*1000);$('#timeLabel').textContent=`${index+1} / ${frame.count} 단계`;
+ $('#tourCounter').textContent=`${index+1} / ${frame.count}`;$('#timeline').value=Math.round(progress*1000);updateStageRail(index);setPhase(complete?'complete':playing?'playing':'paused');
  $('#play').textContent=complete?'다시 재생':playing?'일시정지':'재생';
  $('#previousStep').disabled=index===0&&!complete;$('#nextStep').disabled=complete;
  $('#focus').disabled=!complete;
- if(complete){if(revealChanged&&window.matchMedia?.('(max-width:1150px)').matches)document.querySelector('.result-panel').scrollIntoView({behavior:'smooth',block:'start'});$('#resultContent').hidden=false;$('#resultPending').hidden=true;renderResult();$('#message').textContent='영상 재생이 끝났습니다. 인식 결과를 확인하세요.';}
+ if(complete){if(revealChanged)document.querySelector('.result-panel').scrollIntoView({behavior:'smooth',block:'start'});$('#resultContent').hidden=false;$('#resultPending').hidden=true;renderResult();$('#message').textContent='영상 재생이 끝났습니다. 인식 결과를 확인하세요.';}
  else {concealResult(playing?'초성·중성·종성의 같은 층을 동시에 재생하고 있습니다.':'일시정지 중입니다. 재생을 끝까지 보면 결과가 나타납니다.');$('#message').textContent='실제로 계산한 활성값을 단계별 영상으로 재생합니다.';}
  window.playbackState={stage:index,total:frame.count,branches:[0,1,2],layers:stage.layers,branch,layer:selected,complete,playing,resultVisible:complete};
 }
@@ -83,8 +102,8 @@ function renderLayers(){chain=branchLayers(network.meta,branch);if(!chain.some(l
 function renderResult(){if(!resultRevealed||!prediction)return;const {meta}=network;$('#result').textContent=prediction.char;$('#resultMeta').textContent=sampleLabel?`검증 손글씨 정답: ${sampleLabel} · ${prediction.char===sampleLabel?'일치':'불일치'}`:'손글씨 입력의 추론 결과';$('#parts').innerHTML=prediction.ranked.map((r,i)=>`<div><small>${branchNames[i]}</small><strong>${meta.labels[i][r[0].i]}</strong></div>`).join('');$('#probabilities').innerHTML=prediction.ranked[branch].slice(0,5).map(v=>`<div class="prob-row"><span>${meta.labels[branch][v.i]}</span><div class="bar"><i style="width:${v.p*100}%"></i></div><span>${(v.p*100).toFixed(1)}%</span></div>`).join('');$('#candidates').innerHTML=prediction.candidates.map(c=>`<span class="candidate" title="세 확률의 곱: ${c.score.toPrecision(5)}">${c.char}</span>`).join('');}
 async function infer(){
  if(!network||inferenceBusy)return;
- let pixels;try{pixels=sampleTensor||normalizedInput();}catch(e){$('#message').textContent=e.message;return;}
- resetPlayback();const epoch=inferenceEpoch;inferenceBusy=true;
+ let pixels;try{pixels=sampleTensor||normalizedInput();}catch(e){$('#message').textContent=e.message;canvas.focus({preventScroll:true});return;}
+ resetPlayback();const epoch=inferenceEpoch;inferenceBusy=true;setPhase('computing');
  const btn=$('#predict');btn.disabled=true;btn.textContent='신경망 계산 중…';$('#modelFiles').disabled=true;
  try{
   previewPixels(pixels);$('#message').textContent='전체 신경망을 계산하고 있습니다.';await new Promise(r=>requestAnimationFrame(r));
@@ -96,18 +115,20 @@ async function infer(){
   $('#timeline').disabled=false;$('#play').disabled=false;lastTime=performance.now();tour.start();
   $('#workspace').scrollIntoView({behavior:'smooth',block:'start'});
   window.lastInference={char:prediction.char,expected:sampleLabel,ms:elapsed,outputs:network.meta.outputs.map(n=>Array.from(outputs.get(n).data)),finite:[...outputs.values()].every(v=>v.data.every(Number.isFinite)),tensors:tf.memory().numTensors};
- }catch(e){if(epoch===inferenceEpoch){resetPlayback();$('#message').textContent=e.message;}console.error(e);}
- finally{inferenceBusy=false;btn.disabled=!network;btn.textContent='손글씨 인식하기';$('#modelFiles').disabled=false;}
+ }catch(e){if(epoch===inferenceEpoch){resetPlayback();setPhase('error');$('#message').textContent=e.message;}console.error(e);}
+ finally{inferenceBusy=false;btn.disabled=!network;btn.textContent='신경망으로 살펴보기';$('#modelFiles').disabled=false;}
 }
 $('#predict').onclick=infer;
 document.querySelectorAll('[data-branch]').forEach(button=>button.onclick=()=>{
  branch=+button.dataset.branch;
- document.querySelectorAll('[data-branch]').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-selected',b===button?'true':'false');});
+ syncBranchTabs();
  if(!network)return;
  selected=tour?tour.stages[tour.index].layers[branch]:null;renderLayers();
  if(outputs){if(resultRevealed)renderResult();renderOperation();}
 });
 
+document.querySelectorAll('[role="tablist"]').forEach(list=>list.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;const buttons=[...list.querySelectorAll('[role="tab"]')],current=buttons.indexOf(document.activeElement);if(current<0)return;event.preventDefault();const index=event.key==='Home'?0:event.key==='End'?buttons.length-1:(current+(event.key==='ArrowRight'?1:-1)+buttons.length)%buttons.length;buttons[index].focus();buttons[index].click();}));
+$('#technicalDetails').ontoggle=()=>{if($('#technicalDetails').open&&outputs)renderOperation();};
 $('#resetCamera').onclick=()=>{if(tour&&!tour.complete)scene?.focusLayer(selected);else scene?.reset();};
 $('#density').onchange=refreshScene;
 $('#focus').onclick=()=>{focus=!focus;$('#focus').textContent=focus?'전체 흐름 보기':'선택 층 확대';refreshScene();};
@@ -130,7 +151,7 @@ function renderOperation(){if(!outputs)return;const layer=network.meta.layers.fi
     const a=outputs.get(layer.inputs[0]).data;const wi=network.meta.weights.find(w=>w.layer===layer.name&&w.name.includes('kernel'));const weights=network.weights.get(wi.name);const bias=network.weights.get(layer.name+'/bias:0');const rank=prediction.ranked[branch][0];let sum=bias[rank.i];for(let i=0;i<a.length;i++)sum+=a[i]*weights[i*layer.config.units+rank.i];$('#operationDesc').textContent='펼친 값과 학습된 가중치의 곱을 모두 더하고, Softmax로 각 후보의 출력 확률을 계산합니다.';op.innerHTML=`<div class="calc-result">선택된 후보 <strong>${network.meta.labels[branch][rank.i]}</strong><br>${a.length}개 값의 가중합 + 편향 = <strong>${sum.toFixed(6)}</strong><br>Softmax 출력 = <strong>${rank.p.toFixed(6)}</strong> (${(rank.p*100).toFixed(2)}%)</div><div class="dense-bars">${Array.from(tensor.data).map(v=>`<i style="height:${Math.max(2,v*100)}%"></i>`).join('')}</div>`;
   }else{$('#operationDesc').textContent='모델에 실제로 전달한 64 × 64 RGB 입력입니다. 흰색은 1, 검은색은 0입니다.';op.innerHTML=`<div class="calc-result">입력 값 수 <strong>${tensor.data.length}</strong><br>최솟값 ${Math.min(...tensor.data).toFixed(3)} · 최댓값 ${Math.max(...tensor.data).toFixed(3)}</div>`;}
 }
-function updateConv(){if(!outputs||!$('#outChannel'))return;const t=outputs.get(selected),[h,w,c]=t.shape;const layer=network.meta.layers.find(l=>l.name===selected),cin=outputs.get(layer.inputs[0]).shape[2];const channel=Math.max(0,Math.min(c-1,+$('#outChannel').value||0)),inputChannel=Math.max(0,Math.min(cin-1,+$('#inChannel').value||0));const pos=inspectPosition%(h*w),y=Math.floor(pos/w),x=pos%w;const result=convAt(network,outputs,selected,y,x,channel,inputChannel);$('#scanPos').textContent=`위치 (${y}, ${x})`;$('#inputMatrix').innerHTML=matrixHTML(result.patch,result.kw);$('#filterMatrix').innerHTML=matrixHTML(result.filter,result.kw);$('#calcResult').innerHTML=`${result.cin}개 입력 채널 합산<br>편향 <strong>${result.bias.toFixed(5)}</strong><br>가중합 <strong>${result.sum.toFixed(5)}</strong><br>ReLU 출력 <strong>${result.actual.toFixed(5)}</strong>`;scene?.setInspection(selected,y,x,channel,inputChannel,layer.config.kernel_size);}
+function updateConv(){if(!outputs||!$('#outChannel')||!$('#technicalDetails').open)return;const t=outputs.get(selected),[h,w,c]=t.shape;const layer=network.meta.layers.find(l=>l.name===selected),cin=outputs.get(layer.inputs[0]).shape[2];const channel=Math.max(0,Math.min(c-1,+$('#outChannel').value||0)),inputChannel=Math.max(0,Math.min(cin-1,+$('#inChannel').value||0));const pos=inspectPosition%(h*w),y=Math.floor(pos/w),x=pos%w;const result=convAt(network,outputs,selected,y,x,channel,inputChannel);$('#scanPos').textContent=`위치 (${y}, ${x})`;$('#inputMatrix').innerHTML=matrixHTML(result.patch,result.kw);$('#filterMatrix').innerHTML=matrixHTML(result.filter,result.kw);$('#calcResult').innerHTML=`${result.cin}개 입력 채널 합산<br>편향 <strong>${result.bias.toFixed(5)}</strong><br>가중합 <strong>${result.sum.toFixed(5)}</strong><br>ReLU 출력 <strong>${result.actual.toFixed(5)}</strong>`;scene?.setInspection(selected,y,x,channel,inputChannel,layer.config.kernel_size);}
 let scanClock=0;
 function animate(now){
  requestAnimationFrame(animate);const dt=Math.min(100,Math.max(0,now-lastTime));lastTime=now;
@@ -145,14 +166,14 @@ const basicStrokes={
 };
 function drawBasic(target,label){const c=target.getContext('2d');c.fillStyle='#fff';c.fillRect(0,0,target.width,target.height);c.strokeStyle='#111';c.lineWidth=15*target.width/320;c.lineCap='round';c.lineJoin='round';for(const stroke of basicStrokes[label]){c.beginPath();stroke.forEach(([x,y],i)=>{const p=[x*target.width/320,y*target.height/320];i?c.lineTo(...p):c.moveTo(...p);});c.stroke();}}
 async function useBasic(label){checkpoint();clearCanvas();drawBasic(canvas,label);invalidate();if(network)await infer();else $('#message').textContent='예시를 그렸습니다. 모델 파일을 불러오면 인식할 수 있습니다.';}
-$('#upload').onchange=async e=>{const file=e.target.files[0];if(!file)return;const url=URL.createObjectURL(file);try{const image=new Image();image.src=url;await image.decode();checkpoint();clearCanvas();const s=300/Math.max(image.width,image.height);ctx.drawImage(image,(320-image.width*s)/2,(320-image.height*s)/2,image.width*s,image.height*s);invalidate();$('#message').textContent='이미지를 불러왔습니다. 손글씨 인식하기를 눌러 주세요.';}catch{$('#message').textContent='이미지를 읽을 수 없습니다.';}finally{URL.revokeObjectURL(url);}};
+$('#upload').onchange=async e=>{const file=e.target.files[0];if(!file)return;const url=URL.createObjectURL(file);try{const image=new Image();image.src=url;await image.decode();checkpoint();clearCanvas();const s=300/Math.max(image.width,image.height);ctx.drawImage(image,(320-image.width*s)/2,(320-image.height*s)/2,image.width*s,image.height*s);invalidate();$('#message').textContent='이미지를 불러왔습니다. ‘신경망으로 살펴보기’를 눌러 주세요.';}catch{$('#message').textContent='이미지를 읽을 수 없습니다.';}finally{URL.revokeObjectURL(url);}};
 async function activateModel(local=null){
-  const previous=network;
+  const previous=network;setPhase('loading');
   $('#predict').disabled=true;$('#modelFiles').disabled=true;
   try{
     await tf.ready();const next=await loadNetwork(tf,'./',p=>$('#status').textContent=`모델 준비 ${Math.round(p*100)}%`,local);
     resetPlayback();network=next;previous?.model.dispose();outputs=null;prediction=null;selected=null;playing=false;playPosition=0;
-    $('#params').textContent=network.meta.parameterCount.toLocaleString();$('#status').textContent='모델 준비 완료';$('#statusDot').style.background='#a8ffc9';$('#predict').textContent='손글씨 인식하기';$('#message').textContent='모델을 불러왔습니다. 한글을 쓰거나 기본 예시를 선택해 주세요.';renderLayers();window.appReady=true;
+    $('#params').textContent=network.meta.parameterCount.toLocaleString();$('#status').textContent='모델 준비 완료';$('#statusDot').style.background='#a8ffc9';$('#predict').textContent='신경망으로 살펴보기';$('#message').textContent='모델을 불러왔습니다. 한글을 쓰거나 기본 예시를 선택해 주세요.';renderLayers();setPhase('ready');window.appReady=true;
     $('#play').disabled=true;$('#timeline').disabled=true;$('#focus').disabled=true;
   }finally{$('#modelFiles').disabled=false;$('#predict').disabled=!network;}
 }
@@ -171,5 +192,6 @@ async function boot(){try{
     for(const label of Object.keys(basicStrokes)){const button=document.createElement('button');button.className='sample';button.setAttribute('aria-label',`기본 예시 ${label}`);const drawing=document.createElement('canvas');drawing.width=64;drawing.height=64;drawBasic(drawing,label);const span=document.createElement('span');span.textContent=label;button.append(drawing,span);button.onclick=()=>useBasic(label);$('#samples').appendChild(button);}
     $('#status').textContent='기본 모델 다운로드 중';let cached=null;try{cached=await readModel();}catch{}
     if(cached){try{await activateModel(cached);}catch{await forgetModel().catch(()=>{});await activateModel();}}else await activateModel();
-  }catch(e){$('#status').textContent='모델 준비 실패';$('#message').textContent=e.message;console.error(e);}}
+  }catch(e){setPhase('error');$('#status').textContent='모델 준비 실패';$('#message').textContent=e.message;console.error(e);}}
+$('#retryModel').onclick=async()=>{try{await forgetModel().catch(()=>{});await activateModel();}catch(e){setPhase('error');$('#status').textContent='모델 준비 실패';$('#message').textContent=e.message;}};
 boot();
